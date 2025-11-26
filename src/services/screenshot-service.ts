@@ -22,7 +22,6 @@ export async function captureAndUploadScreenshots(
   tabTitle: string
 ): Promise<void> {
   const baseUrl = process.env.BASE_URL ?? "http://localhost:3000";
-  const bucket = process.env.S3_BUCKET ?? "autostrum-screenshots";
 
   let browser: Browser | null = null;
 
@@ -79,7 +78,7 @@ export async function captureAndUploadScreenshots(
     await Promise.all([
       s3.send(
         new PutObjectCommand({
-          Bucket: bucket,
+          Bucket: "autostrum-screenshots-dev",
           Key: `${tabId}/light.jpeg`,
           Body: resizedLight,
           ContentType: "image/jpeg",
@@ -87,7 +86,7 @@ export async function captureAndUploadScreenshots(
       ),
       s3.send(
         new PutObjectCommand({
-          Bucket: bucket,
+          Bucket: "autostrum-screenshots-dev",
           Key: `${tabId}/dark.jpeg`,
           Body: resizedDark,
           ContentType: "image/jpeg",
