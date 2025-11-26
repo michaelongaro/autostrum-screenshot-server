@@ -22,6 +22,12 @@ export async function captureAndUploadScreenshots(
   tabTitle: string,
   type: "production" | "development"
 ): Promise<void> {
+  const playwrightEndpoint = process.env.BROWSER_PLAYWRIGHT_ENDPOINT;
+
+  if (!playwrightEndpoint) {
+    throw new Error("BROWSER_PLAYWRIGHT_ENDPOINT is not defined");
+  }
+
   const baseUrl = process.env.BASE_URL ?? "http://localhost:3000";
   const bucket =
     type === "production"
@@ -31,10 +37,7 @@ export async function captureAndUploadScreenshots(
   let browser: Browser | null = null;
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+    browser = await chromium.connect(playwrightEndpoint);
 
     const context = await browser.newContext({
       viewport: { width: 1920, height: 1080 },

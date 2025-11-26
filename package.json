@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "postinstall": "npx playwright install",
     "start": "node dist/index.js"
   },
   "dependencies": {
