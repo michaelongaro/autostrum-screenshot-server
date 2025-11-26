@@ -6,6 +6,7 @@ import { captureAndUploadScreenshots } from "../services/screenshot-service.js";
 const screenshotRequestSchema = z.object({
   tabId: z.number(),
   tabTitle: z.string(),
+  type: z.enum(["production", "development"]),
   secret: z.string(),
 });
 
@@ -15,7 +16,11 @@ screenshotRoute.post(
   "/capture",
   zValidator("json", screenshotRequestSchema),
   async (c) => {
-    const { tabId, tabTitle, secret } = c.req.valid("json");
+    const { tabId, tabTitle, type, secret } = c.req.valid("json");
+
+    console.log(
+      `Received screenshot request for tabId: ${tabId}, tabTitle: ${tabTitle}, type: ${type}`
+    );
 
     // Validate secret immediately
     if (secret !== process.env.SCREENSHOT_SECRET) {
@@ -23,7 +28,7 @@ screenshotRoute.post(
     }
 
     try {
-      await captureAndUploadScreenshots(tabId, tabTitle);
+      await captureAndUploadScreenshots(tabId, tabTitle, type);
       return c.json({ success: true });
     } catch (error) {
       console.error(`Screenshot capture failed for tab ${tabId}:`, error);

@@ -19,9 +19,14 @@ async function resizeImage(buffer: Buffer): Promise<Buffer> {
 
 export async function captureAndUploadScreenshots(
   tabId: number,
-  tabTitle: string
+  tabTitle: string,
+  type: "production" | "development"
 ): Promise<void> {
   const baseUrl = process.env.BASE_URL ?? "http://localhost:3000";
+  const bucket =
+    type === "production"
+      ? "autostrum-screenshots"
+      : "autostrum-screenshots-dev";
 
   let browser: Browser | null = null;
 
@@ -78,7 +83,7 @@ export async function captureAndUploadScreenshots(
     await Promise.all([
       s3.send(
         new PutObjectCommand({
-          Bucket: "autostrum-screenshots-dev",
+          Bucket: bucket,
           Key: `${tabId}/light.jpeg`,
           Body: resizedLight,
           ContentType: "image/jpeg",
@@ -86,7 +91,7 @@ export async function captureAndUploadScreenshots(
       ),
       s3.send(
         new PutObjectCommand({
-          Bucket: "autostrum-screenshots-dev",
+          Bucket: bucket,
           Key: `${tabId}/dark.jpeg`,
           Body: resizedDark,
           ContentType: "image/jpeg",
