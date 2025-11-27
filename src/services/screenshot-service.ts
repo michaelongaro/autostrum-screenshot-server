@@ -12,7 +12,7 @@ const s3 = new S3Client({
 
 async function resizeImage(buffer: Buffer): Promise<Buffer> {
   return sharp(buffer)
-    .resize({ width: Math.round(1318 / 3.25) })
+    .resize({ width: Math.round(1318 / 3.25) }) // 1318px is the original width of the screenshot
     .jpeg({ quality: 90 })
     .toBuffer();
 }
@@ -45,15 +45,14 @@ export async function captureAndUploadScreenshots(
 
     const page = await context.newPage();
 
-    const url = `${baseUrl}/tab/${tabId}/${encodeURIComponent(
-      tabTitle
-    )}?screenshot=true`;
-    await page.goto(url, { waitUntil: "networkidle" });
+    await page.goto(
+      `${baseUrl}/tab/${tabId}/${encodeURIComponent(tabTitle)}?screenshot=true`
+    );
 
     // Wait for the screenshot elements to be visible
     await page
       .locator("#tabPreviewScreenshotLight")
-      .waitFor({ state: "visible", timeout: 30000 });
+      .waitFor({ state: "visible" });
 
     // Hide UI elements that shouldn't be in the screenshot
     await page.evaluate(() => {
