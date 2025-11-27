@@ -37,7 +37,10 @@ export async function captureAndUploadScreenshots(
   let browser: Browser | null = null;
 
   try {
-    browser = await chromium.connect(playwrightEndpoint);
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
 
     const context = await browser.newContext({
       viewport: { width: 1920, height: 1080 },
@@ -54,37 +57,26 @@ export async function captureAndUploadScreenshots(
       .locator("#tabPreviewScreenshotLight")
       .waitFor({ state: "visible" });
 
-    // Hide the header
+    // Hide UI elements that shouldn't be in the screenshot
     await page.evaluate(() => {
-      const el = document.getElementById("desktopHeader");
-      if (el) {
-        el.style.display = "none";
-      }
+      const header = document.getElementById("desktopHeader");
+      if (header) header.style.display = "none";
+
+      const controls = document.getElementById("stickyBottomControls");
+      if (controls) controls.style.display = "none";
     });
 
-    // Hide the sticky bottom controls
-    await page.evaluate(() => {
-      const el = document.getElementById("stickyBottomControls");
-      if (el) {
-        el.style.display = "none";
-      }
-    });
-
-    // Get light screenshot
-    const lightImageBuffer = await page
-      .locator("#tabPreviewScreenshotLight")
-      .screenshot({
+    // Capture both screenshots in parallel
+    const [lightImageBuffer, darkImageBuffer] = await Promise.all([
+      page.locator("#tabPreviewScreenshotLight").screenshot({
         type: "jpeg",
         quality: 90,
-      });
-
-    // Get dark screenshot
-    const darkImageBuffer = await page
-      .locator("#tabPreviewScreenshotDark")
-      .screenshot({
+      }),
+      page.locator("#tabPreviewScreenshotDark").screenshot({
         type: "jpeg",
         quality: 90,
-      });
+      }),
+    ]);
 
     // Resize both images
     const [resizedLight, resizedDark] = await Promise.all([

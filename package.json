@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "npx playwright install chromium --with-deps && tsc",
     "start": "node dist/index.js"
   },
   "dependencies": {
