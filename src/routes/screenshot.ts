@@ -18,10 +18,6 @@ screenshotRoute.post(
   async (c) => {
     const { tabId, tabTitle, type, secret } = c.req.valid("json");
 
-    console.log(
-      `Received screenshot request for tabId: ${tabId}, tabTitle: ${tabTitle}, type: ${type}, secret: ${secret}, ${process.env.SCREENSHOT_SECRET}`
-    );
-
     // Validate secret immediately
     if (secret !== process.env.SCREENSHOT_SECRET) {
       return c.json({ success: false, error: "Unauthorized" }, 401);
