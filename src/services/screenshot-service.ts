@@ -54,26 +54,37 @@ export async function captureAndUploadScreenshots(
       .locator("#tabPreviewScreenshotLight")
       .waitFor({ state: "visible" });
 
-    // Hide UI elements that shouldn't be in the screenshot
+    // Hide the header
     await page.evaluate(() => {
-      const header = document.getElementById("desktopHeader");
-      if (header) header.style.display = "none";
-
-      const controls = document.getElementById("stickyBottomControls");
-      if (controls) controls.style.display = "none";
+      const el = document.getElementById("desktopHeader");
+      if (el) {
+        el.style.display = "none";
+      }
     });
 
-    // Capture both screenshots in parallel
-    const [lightImageBuffer, darkImageBuffer] = await Promise.all([
-      page.locator("#tabPreviewScreenshotLight").screenshot({
+    // Hide the sticky bottom controls
+    await page.evaluate(() => {
+      const el = document.getElementById("stickyBottomControls");
+      if (el) {
+        el.style.display = "none";
+      }
+    });
+
+    // Get light screenshot
+    const lightImageBuffer = await page
+      .locator("#tabPreviewScreenshotLight")
+      .screenshot({
         type: "jpeg",
         quality: 90,
-      }),
-      page.locator("#tabPreviewScreenshotDark").screenshot({
+      });
+
+    // Get dark screenshot
+    const darkImageBuffer = await page
+      .locator("#tabPreviewScreenshotDark")
+      .screenshot({
         type: "jpeg",
         quality: 90,
-      }),
-    ]);
+      });
 
     // Resize both images
     const [resizedLight, resizedDark] = await Promise.all([
