@@ -22,12 +22,6 @@ export async function captureAndUploadScreenshots(
   tabTitle: string,
   type: "production" | "development"
 ): Promise<void> {
-  const playwrightEndpoint = process.env.BROWSER_PLAYWRIGHT_ENDPOINT;
-
-  if (!playwrightEndpoint) {
-    throw new Error("BROWSER_PLAYWRIGHT_ENDPOINT is not defined");
-  }
-
   const baseUrl = process.env.BASE_URL ?? "http://localhost:3000";
   const bucket =
     type === "production"
