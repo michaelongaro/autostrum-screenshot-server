@@ -2,6 +2,29 @@ import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import sharp from "sharp";
 import { chromium, type Browser } from "playwright";
 
+let browserInstance: Browser | null = null;
+
+async function getBrowser(): Promise<Browser> {
+  if (browserInstance && browserInstance.isConnected()) {
+    return browserInstance;
+  }
+
+  console.log("Launching new Playwright browser instance...");
+  browserInstance = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+
+  return browserInstance;
+}
+
+export async function closeBrowser() {
+  if (browserInstance) {
+    await browserInstance.close();
+    browserInstance = null;
+  }
+}
+
 const s3 = new S3Client({
   region: "us-east-2",
   credentials: {
@@ -28,18 +51,13 @@ export async function captureAndUploadScreenshots(
       ? "autostrum-screenshots"
       : "autostrum-screenshots-dev";
 
-  let browser: Browser | null = null;
+  const browser = await getBrowser();
+
+  const context = await browser.newContext({
+    viewport: { width: 1920, height: 1080 },
+  });
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
-
-    const context = await browser.newContext({
-      viewport: { width: 1920, height: 1080 },
-    });
-
     const page = await context.newPage();
 
     await page.goto(
@@ -100,8 +118,8 @@ export async function captureAndUploadScreenshots(
 
     console.log(`Screenshots uploaded for tab ${tabId}`);
   } finally {
-    if (browser) {
-      await browser.close();
+    if (context) {
+      await context.close();
     }
   }
 }
