@@ -43,7 +43,7 @@ async function resizeImage(buffer: Buffer): Promise<Buffer> {
 export async function captureAndUploadScreenshots(
   tabId: number,
   tabTitle: string,
-  type: "production" | "development"
+  type: "production" | "development",
 ): Promise<void> {
   const baseUrl = process.env.BASE_URL ?? "http://localhost:3000";
   const bucket =
@@ -61,7 +61,7 @@ export async function captureAndUploadScreenshots(
     const page = await context.newPage();
 
     await page.goto(
-      `${baseUrl}/tab/${tabId}/${encodeURIComponent(tabTitle)}?screenshot=true`
+      `${baseUrl}/tab/${tabId}/${encodeURIComponent(tabTitle)}?screenshot=true`,
     );
 
     // Wait for the screenshot elements to be visible
@@ -104,7 +104,7 @@ export async function captureAndUploadScreenshots(
           Key: `${tabId}/light.jpeg`,
           Body: resizedLight,
           ContentType: "image/jpeg",
-        })
+        }),
       ),
       s3.send(
         new PutObjectCommand({
@@ -112,7 +112,7 @@ export async function captureAndUploadScreenshots(
           Key: `${tabId}/dark.jpeg`,
           Body: resizedDark,
           ContentType: "image/jpeg",
-        })
+        }),
       ),
     ]);
 
