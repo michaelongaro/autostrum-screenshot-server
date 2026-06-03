@@ -1,27 +1,163 @@
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import sharp from "sharp";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser, type BrowserContext } from "playwright";
 
 let browserInstance: Browser | null = null;
+let browserLaunchPromise: Promise<Browser> | null = null;
+let browserClosePromise: Promise<void> | null = null;
+
+const activePlaywrightUses = new Set<symbol>();
+
+let idleCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+const PLAYWRIGHT_IDLE_CLOSE_MS = Number(
+  process.env.PLAYWRIGHT_IDLE_CLOSE_MS ?? 60_000,
+);
+
+function cancelIdleClose() {
+  if (idleCloseTimer) {
+    clearTimeout(idleCloseTimer);
+    idleCloseTimer = null;
+  }
+}
+
+function beginPlaywrightUse(tabId: number): symbol {
+  const token = Symbol(`tab:${tabId}`);
+  activePlaywrightUses.add(token);
+  cancelIdleClose();
+  return token;
+}
+
+function endPlaywrightUse(token: symbol) {
+  activePlaywrightUses.delete(token);
+
+  if (activePlaywrightUses.size === 0) {
+    scheduleIdleClose();
+  }
+}
+
+function scheduleIdleClose() {
+  if (idleCloseTimer || activePlaywrightUses.size > 0) {
+    return;
+  }
+
+  idleCloseTimer = setTimeout(() => {
+    idleCloseTimer = null;
+    void closeBrowserIfIdle();
+  }, PLAYWRIGHT_IDLE_CLOSE_MS);
+
+  idleCloseTimer.unref?.();
+}
 
 async function getBrowser(): Promise<Browser> {
+  cancelIdleClose();
+
+  if (browserClosePromise) {
+    await browserClosePromise;
+  }
+
   if (browserInstance && browserInstance.isConnected()) {
     return browserInstance;
   }
 
-  console.log("Launching new Playwright browser instance...");
-  browserInstance = await chromium.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+  if (!browserLaunchPromise) {
+    console.log("Launching new Playwright browser instance...");
 
-  return browserInstance;
+    browserLaunchPromise = chromium
+      .launch({
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      })
+      .then((browser) => {
+        browserInstance = browser;
+
+        browser.on("disconnected", () => {
+          if (browserInstance === browser) {
+            browserInstance = null;
+          }
+        });
+
+        return browser;
+      })
+      .finally(() => {
+        browserLaunchPromise = null;
+      });
+  }
+
+  return browserLaunchPromise;
 }
 
-export async function closeBrowser() {
-  if (browserInstance) {
-    await browserInstance.close();
-    browserInstance = null;
+async function closeBrowserIfIdle(): Promise<void> {
+  if (activePlaywrightUses.size > 0) {
+    return;
+  }
+
+  if (browserLaunchPromise) {
+    await browserLaunchPromise.catch(() => undefined);
+  }
+
+  if (activePlaywrightUses.size > 0) {
+    return;
+  }
+
+  if (browserClosePromise) {
+    await browserClosePromise;
+    return;
+  }
+
+  const browser = browserInstance;
+  browserInstance = null;
+
+  if (!browser) {
+    return;
+  }
+
+  console.log("Closing idle Playwright browser instance...");
+
+  const closePromise = browser.close().catch((error) => {
+    console.error("Failed to close Playwright browser:", error);
+  });
+
+  browserClosePromise = closePromise;
+
+  await closePromise;
+
+  if (browserClosePromise === closePromise) {
+    browserClosePromise = null;
+  }
+}
+
+export async function closeBrowser(): Promise<void> {
+  cancelIdleClose();
+
+  if (browserLaunchPromise) {
+    await browserLaunchPromise.catch(() => undefined);
+  }
+
+  if (browserClosePromise) {
+    await browserClosePromise;
+    return;
+  }
+
+  const browser = browserInstance;
+  browserInstance = null;
+
+  if (!browser) {
+    return;
+  }
+
+  console.log("Closing Playwright browser instance...");
+
+  const closePromise = browser.close().catch((error) => {
+    console.error("Failed to close Playwright browser:", error);
+  });
+
+  browserClosePromise = closePromise;
+
+  await closePromise;
+
+  if (browserClosePromise === closePromise) {
+    browserClosePromise = null;
   }
 }
 
@@ -40,24 +176,22 @@ async function resizeImage(buffer: Buffer): Promise<Buffer> {
     .toBuffer();
 }
 
-export async function captureAndUploadScreenshots(
+async function captureScreenshotsWithPlaywright(
   tabId: number,
   tabTitle: string,
-  type: "production" | "development",
-): Promise<void> {
+): Promise<[Buffer, Buffer]> {
   const baseUrl = process.env.BASE_URL ?? "http://localhost:3000";
-  const bucket =
-    type === "production"
-      ? "autostrum-screenshots"
-      : "autostrum-screenshots-dev";
+  const token = beginPlaywrightUse(tabId);
 
-  const browser = await getBrowser();
-
-  const context = await browser.newContext({
-    viewport: { width: 1920, height: 1080 },
-  });
+  let context: BrowserContext | null = null;
 
   try {
+    const browser = await getBrowser();
+
+    context = await browser.newContext({
+      viewport: { width: 1920, height: 1080 },
+    });
+
     const page = await context.newPage();
 
     await page.goto(
@@ -78,8 +212,7 @@ export async function captureAndUploadScreenshots(
       if (controls) controls.style.display = "none";
     });
 
-    // Capture both screenshots in parallel
-    const [lightImageBuffer, darkImageBuffer] = await Promise.all([
+    const screenshots = await Promise.all([
       page.locator("#tabPreviewScreenshotLight").screenshot({
         type: "jpeg",
         quality: 90,
@@ -90,36 +223,54 @@ export async function captureAndUploadScreenshots(
       }),
     ]);
 
-    // Resize both images
-    const [resizedLight, resizedDark] = await Promise.all([
-      resizeImage(lightImageBuffer),
-      resizeImage(darkImageBuffer),
-    ]);
-
-    // Upload to S3
-    await Promise.all([
-      s3.send(
-        new PutObjectCommand({
-          Bucket: bucket,
-          Key: `${tabId}/light.jpeg`,
-          Body: resizedLight,
-          ContentType: "image/jpeg",
-        }),
-      ),
-      s3.send(
-        new PutObjectCommand({
-          Bucket: bucket,
-          Key: `${tabId}/dark.jpeg`,
-          Body: resizedDark,
-          ContentType: "image/jpeg",
-        }),
-      ),
-    ]);
-
-    console.log(`Screenshots uploaded for tab ${tabId}`);
+    return screenshots;
   } finally {
     if (context) {
-      await context.close();
+      await context.close().catch((error) => {
+        console.error(`Failed to close context for tab ${tabId}:`, error);
+      });
     }
+
+    endPlaywrightUse(token);
   }
+}
+
+export async function captureAndUploadScreenshots(
+  tabId: number,
+  tabTitle: string,
+  type: "production" | "development",
+): Promise<void> {
+  const bucket =
+    type === "production"
+      ? "autostrum-screenshots"
+      : "autostrum-screenshots-dev";
+
+  const [lightImageBuffer, darkImageBuffer] =
+    await captureScreenshotsWithPlaywright(tabId, tabTitle);
+
+  const [resizedLight, resizedDark] = await Promise.all([
+    resizeImage(lightImageBuffer),
+    resizeImage(darkImageBuffer),
+  ]);
+
+  await Promise.all([
+    s3.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: `${tabId}/light.jpeg`,
+        Body: resizedLight,
+        ContentType: "image/jpeg",
+      }),
+    ),
+    s3.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: `${tabId}/dark.jpeg`,
+        Body: resizedDark,
+        ContentType: "image/jpeg",
+      }),
+    ),
+  ]);
+
+  console.log(`Screenshots uploaded for tab ${tabId}`);
 }
