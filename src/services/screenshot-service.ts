@@ -171,7 +171,7 @@ const s3 = new S3Client({
 
 async function resizeImage(buffer: Buffer): Promise<Buffer> {
   return sharp(buffer)
-    .resize({ width: Math.round(1318 / 3.25) }) // 1318px is the original width of the screenshot
+    .resize({ width: 1200 }) // 1318px is the original width of the screenshot
     .jpeg({ quality: 90 })
     .toBuffer();
 }
