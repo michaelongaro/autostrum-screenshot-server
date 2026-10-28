@@ -9,18 +9,18 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1102.0",
+    "@aws-sdk/client-s3": "^3.1159.0",
     "@hono/node-server": "^1.19.17",
-    "@hono/zod-validator": "^0.9.0",
+    "@hono/zod-validator": "^0.9.1",
     "dotenv": "^17.4.2",
-    "hono": "^4.13.0",
-    "playwright": "^1.62.1",
-    "sharp": "^0.35.3",
-    "zod": "^4.4.3"
+    "hono": "^4.13.14",
+    "playwright": "^1.64.1",
+    "sharp": "^0.35.5",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^25.9.5",
-    "tsx": "^4.23.5",
+    "@types/node": "^25.9.9",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   },
   "allowScripts": {
