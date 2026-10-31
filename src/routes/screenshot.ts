@@ -4,7 +4,7 @@ import { z } from "zod";
 import { captureAndUploadScreenshots } from "../services/screenshot-service.js";
 
 const screenshotRequestSchema = z.object({
-  tabId: z.number(),
+  tabId: z.number().int().positive(),
   tabTitle: z.string(),
   type: z.enum(["production", "development"]),
   secret: z.string(),

@@ -1,6 +1,11 @@
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import sharp from "sharp";
 import { chromium, type Browser, type BrowserContext } from "playwright";
+import {
+  captureTabScreenshotMasks,
+  getTabScreenshotMaskKey,
+} from "./screenshot-masks.js";
+import { readRenderedTabVersion } from "./rendered-tab-version.js";
 
 let browserInstance: Browser | null = null;
 let browserLaunchPromise: Promise<Browser> | null = null;
@@ -179,7 +184,7 @@ async function resizeImage(buffer: Buffer): Promise<Buffer> {
 async function captureScreenshotsWithPlaywright(
   tabId: number,
   tabTitle: string,
-): Promise<[Buffer, Buffer]> {
+): Promise<{ light: Buffer; dark: Buffer; masks: Buffer; version: string }> {
   const baseUrl = process.env.BASE_URL ?? "http://localhost:3000";
   const token = beginPlaywrightUse(tabId);
 
@@ -194,14 +199,24 @@ async function captureScreenshotsWithPlaywright(
 
     const page = await context.newPage();
 
-    await page.goto(
-      `${baseUrl}/tab/${tabId}/${encodeURIComponent(tabTitle)}?screenshot=true`,
+    const url = new URL(
+      `/tab/${tabId}/${encodeURIComponent(tabTitle)}`,
+      baseUrl,
     );
+    url.searchParams.set("screenshot", "true");
+    // Related grid cards should not load their own mask atlases during capture.
+    url.searchParams.set("screenshotRenderer", "gradient-map");
+    await page.goto(url.href, { waitUntil: "networkidle", timeout: 120_000 });
 
     // Wait for the screenshot elements to be visible
     await page
       .locator("#tabPreviewScreenshotLight")
       .waitFor({ state: "visible" });
+    const version = await readRenderedTabVersion(page, tabId);
+    await page.evaluate(() => document.fonts.ready);
+    await page.addStyleTag({
+      content: "nextjs-portal { display: none !important; }",
+    });
 
     // Hide UI elements that shouldn't be in the screenshot
     await page.evaluate(() => {
@@ -212,18 +227,18 @@ async function captureScreenshotsWithPlaywright(
       if (controls) controls.style.display = "none";
     });
 
-    const screenshots = await Promise.all([
-      page.locator("#tabPreviewScreenshotLight").screenshot({
-        type: "jpeg",
-        quality: 90,
-      }),
-      page.locator("#tabPreviewScreenshotDark").screenshot({
-        type: "jpeg",
-        quality: 90,
-      }),
-    ]);
-
-    return screenshots;
+    // Take screenshots sequentially: locator captures can scroll the same page.
+    // Encode JPEG only once, after resizing the lossless source captures.
+    const light = await page.locator("#tabPreviewScreenshotLight").screenshot({
+      type: "png",
+      animations: "disabled",
+    });
+    const dark = await page.locator("#tabPreviewScreenshotDark").screenshot({
+      type: "png",
+      animations: "disabled",
+    });
+    const masks = await captureTabScreenshotMasks(page);
+    return { light, dark, masks, version };
   } finally {
     if (context) {
       await context.close().catch((error) => {
@@ -235,7 +250,7 @@ async function captureScreenshotsWithPlaywright(
   }
 }
 
-export async function captureAndUploadScreenshots(
+async function captureAndUpload(
   tabId: number,
   tabTitle: string,
   type: "production" | "development",
@@ -245,15 +260,24 @@ export async function captureAndUploadScreenshots(
       ? "autostrum-screenshots"
       : "autostrum-screenshots-dev";
 
-  const [lightImageBuffer, darkImageBuffer] =
+  const { light, dark, masks, version } =
     await captureScreenshotsWithPlaywright(tabId, tabTitle);
 
   const [resizedLight, resizedDark] = await Promise.all([
-    resizeImage(lightImageBuffer),
-    resizeImage(darkImageBuffer),
+    resizeImage(light),
+    resizeImage(dark),
   ]);
 
-  await Promise.all([
+  const uploads = await Promise.allSettled([
+    s3.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: getTabScreenshotMaskKey(tabId),
+        Body: masks,
+        ContentType: "image/png",
+        Metadata: { "tab-version": version },
+      }),
+    ),
     s3.send(
       new PutObjectCommand({
         Bucket: bucket,
@@ -272,5 +296,34 @@ export async function captureAndUploadScreenshots(
     ),
   ]);
 
-  console.log(`Screenshots uploaded for tab ${tabId}`);
+  // Finish every in-flight upload before releasing the per-tab queue, including
+  // on failure. Otherwise an older upload could complete during the next job.
+  if (uploads.some((upload) => upload.status === "rejected")) {
+    throw new Error(`Failed to upload all screenshot assets for tab ${tabId}`);
+  }
+
+  console.log(`Masks and fallback screenshots uploaded for tab ${tabId}`);
+}
+
+// Serialize captures of the same tab so an older in-flight save cannot finish
+// uploading after a newer capture in this server process. Other tabs can still
+// share the browser concurrently, each in its own context.
+const pendingCaptures = new Map<string, Promise<void>>();
+
+export async function captureAndUploadScreenshots(
+  tabId: number,
+  tabTitle: string,
+  type: "production" | "development",
+): Promise<void> {
+  const key = `${type}:${tabId}`;
+  const previous = pendingCaptures.get(key) ?? Promise.resolve();
+  const capture = previous
+    .catch(() => undefined)
+    .then(() => captureAndUpload(tabId, tabTitle, type));
+  pendingCaptures.set(key, capture);
+  try {
+    await capture;
+  } finally {
+    if (pendingCaptures.get(key) === capture) pendingCaptures.delete(key);
+  }
 }
