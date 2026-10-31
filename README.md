@@ -40,22 +40,32 @@ The existing `POST /screenshot/capture` request is unchanged:
 }
 ```
 
-Each successful capture uploads three objects:
+Each successful capture uploads nine objects: the three original assets plus
+400px and 800px card variants generated once with Sharp, before upload.
 
-| Object key             | Content type | Purpose                                            |
-| ---------------------- | ------------ | -------------------------------------------------- |
-| `<tabId>/masks-v1.png` | `image/png`  | One lossless atlas for all palettes and both modes |
-| `<tabId>/light.jpeg`   | `image/jpeg` | Light-mode gradient-map fallback                   |
-| `<tabId>/dark.jpeg`    | `image/jpeg` | Dark-mode gradient-map fallback                    |
+| Object key                             | Content type | Purpose                                            |
+| -------------------------------------- | ------------ | -------------------------------------------------- |
+| `<tabId>/masks-v1.png`                 | `image/png`  | One lossless atlas for all palettes and both modes |
+| `<tabId>/light.jpeg`                   | `image/jpeg` | Light-mode gradient-map fallback                   |
+| `<tabId>/dark.jpeg`                    | `image/jpeg` | Dark-mode gradient-map fallback                    |
+| `<tabId>/card-v1/<width>/masks-v1.png` | `image/png`  | Card atlas, where width is 400 or 800              |
+| `<tabId>/card-v1/<width>/light.jpeg`   | `image/jpeg` | Light-mode card fallback                           |
+| `<tabId>/card-v1/<width>/dark.jpeg`    | `image/jpeg` | Dark-mode card fallback                            |
 
 `type: "production"` uses `autostrum-screenshots`; `"development"` uses
 `autostrum-screenshots-dev`. The atlas is 1200 × 3920 pixels: seven 1200 × 560 alpha
 masks stacked in the exact role order defined in `src/services/screenshot-masks.ts`.
 Keep that layout and capture logic in sync with Autostrum's
 `src/utils/tabScreenshotMasks.ts` and `src/utils/captureTabScreenshotMasks.ts`.
+Each card atlas also has seven stacked roles. Individual role heights are 187px
+at width 400 and 373px at width 800. Layers are resized separately to prevent
+bleeding between adjacent roles. JPEG variants are encoded directly from the
+lossless capture, with quality 90 and 4:4:4 chroma subsampling.
+Keep `src/services/screenshot-thumbnails.ts` in sync with Autostrum's
+`src/utils/tabScreenshotThumbnails.ts` and `src/utils/createTabScreenshotThumbnails.ts`.
 
 The server reads the rendered tab's `updatedAt` from the page's serialized Next.js
-props and stores its ISO value in S3 metadata as `tab-version`. This requires no
+props and stores its ISO value on every asset in S3 metadata as `tab-version`. This requires no
 new request field or additional Autostrum deployment for the timestamp. It avoids
 guessing revisions and labels the atlas with the version actually captured.
 Autostrum rejects an atlas whose metadata does not match the displayed tab.
@@ -72,19 +82,27 @@ context when capture finishes, and closes the browser after
 
 ## Deploy and backfill
 
-Deploy the mask-compatible Autostrum app before deploying this server. Existing
+Deploy both repositories to enable thumbnails. Either deployment order works:
+the app falls back to original assets until a tab has matching thumbnails, and
+older app deployments continue using the original assets. Existing
 environment variables and the current Dockerfile are sufficient; the Docker build
-already installs Chromium. New and edited tabs then generate masks automatically.
+already installs Chromium. New and edited tabs then generate thumbnails automatically.
 
-To populate masks for older tabs, run the bulk script **from the Autostrum repo**
+To populate all thumbnails for older tabs, run the bulk script **from the Autostrum repo**
 with production database/AWS credentials, substituting your deployed app URL:
 
 ```sh
-npx tsx src/utils/bulkRetakeAllTabScreenshots.ts --masks-only --bucket=autostrum-screenshots --base-url=https://YOUR_PRODUCTION_DOMAIN
+npx tsx src/utils/bulkRetakeAllTabScreenshots.ts --bucket=autostrum-screenshots --base-url=https://YOUR_PRODUCTION_DOMAIN
 ```
 
 That standalone script launches its own browser and does not require this server
-to be running. Missing or outdated masks fall back to the existing JPEGs in the app.
+to be running. Add `--tab=123` to capture one tab first. `--masks-only` updates the
+full-size atlas and both mask thumbnails while preserving all JPEGs.
+
+The app's APIs only fetch stored objects; they never resize on a request. JPEG
+cards explicitly bypass Next Image optimization and use a native responsive
+`picture` source. Masks are fetched directly. Railway uploads the generated
+objects once per capture and is not in the image delivery path for visitors.
 
 ## Verify
 

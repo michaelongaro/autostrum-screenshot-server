@@ -6,6 +6,7 @@ import {
   getTabScreenshotMaskKey,
 } from "./screenshot-masks.js";
 import { readRenderedTabVersion } from "./rendered-tab-version.js";
+import { createTabScreenshotThumbnails } from "./screenshot-thumbnails.js";
 
 let browserInstance: Browser | null = null;
 let browserLaunchPromise: Promise<Browser> | null = null;
@@ -263,9 +264,10 @@ async function captureAndUpload(
   const { light, dark, masks, version } =
     await captureScreenshotsWithPlaywright(tabId, tabTitle);
 
-  const [resizedLight, resizedDark] = await Promise.all([
+  const [resizedLight, resizedDark, thumbnails] = await Promise.all([
     resizeImage(light),
     resizeImage(dark),
+    createTabScreenshotThumbnails(tabId, { light, dark, masks }),
   ]);
 
   const uploads = await Promise.allSettled([
@@ -284,6 +286,7 @@ async function captureAndUpload(
         Key: `${tabId}/light.jpeg`,
         Body: resizedLight,
         ContentType: "image/jpeg",
+        Metadata: { "tab-version": version },
       }),
     ),
     s3.send(
@@ -292,7 +295,19 @@ async function captureAndUpload(
         Key: `${tabId}/dark.jpeg`,
         Body: resizedDark,
         ContentType: "image/jpeg",
+        Metadata: { "tab-version": version },
       }),
+    ),
+    ...thumbnails.map(({ key, body, contentType }) =>
+      s3.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: body,
+          ContentType: contentType,
+          Metadata: { "tab-version": version },
+        }),
+      ),
     ),
   ]);
 
@@ -302,7 +317,9 @@ async function captureAndUpload(
     throw new Error(`Failed to upload all screenshot assets for tab ${tabId}`);
   }
 
-  console.log(`Masks and fallback screenshots uploaded for tab ${tabId}`);
+  console.log(
+    `Masks, fallback screenshots, and card thumbnails uploaded for tab ${tabId}`,
+  );
 }
 
 // Serialize captures of the same tab so an older in-flight save cannot finish

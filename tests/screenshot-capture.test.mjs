@@ -123,11 +123,11 @@ test("capture API generates compatible masks without changing the request contra
   );
 
   await t.test(
-    "legacy request uploads the mask atlas and both fallback JPEGs",
+    "legacy request uploads originals and both thumbnail sizes",
     async () => {
       const response = await capture();
       assert.equal(response.status, 200, await response.text());
-      assert.equal(uploads.length, 3);
+      assert.equal(uploads.length, 9);
       const mask = uploads.find((upload) => upload.Key === "42/masks-v1.png");
       assert.equal(mask.Bucket, "autostrum-screenshots-dev");
       assert.equal(mask.ContentType, "image/png");
@@ -158,6 +158,26 @@ test("capture API generates compatible masks without changing the request contra
         );
         assert.equal(image.ContentType, "image/jpeg");
         assert.equal((await sharp(image.Body).metadata()).width, 1200);
+      }
+      for (const width of [400, 800]) {
+        const height = Math.round((width * 560) / 1200);
+        for (const filename of ["light.jpeg", "dark.jpeg", "masks-v1.png"]) {
+          const thumbnail = uploads.find(
+            (upload) => upload.Key === `42/card-v1/${width}/${filename}`,
+          );
+          assert.equal(thumbnail.Bucket, "autostrum-screenshots-dev");
+          assert.equal(thumbnail.Metadata["tab-version"], version);
+          const metadata = await sharp(thumbnail.Body).metadata();
+          assert.equal(metadata.width, width);
+          assert.equal(
+            metadata.height,
+            filename.endsWith("png") ? height * 7 : height,
+          );
+          assert.equal(
+            thumbnail.ContentType,
+            filename.endsWith("png") ? "image/png" : "image/jpeg",
+          );
+        }
       }
       assert.equal(
         fixture.visits[0].url.searchParams.get("screenshotRenderer"),
@@ -192,7 +212,7 @@ test("capture API generates compatible masks without changing the request contra
       const arrivals = fixture.visits.slice(visits);
       assert.deepEqual(
         arrivals.map((visit) => visit.uploads - start),
-        [0, 3],
+        [0, 9],
       );
       assert(arrivals.every((visit) => visit.pendingUploads === 0));
     },
