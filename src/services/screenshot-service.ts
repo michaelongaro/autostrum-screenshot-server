@@ -239,6 +239,9 @@ async function captureScreenshotsWithPlaywright(
       animations: "disabled",
     });
     const masks = await captureTabScreenshotMasks(page);
+    if ((await readRenderedTabVersion(page, tabId)) !== version) {
+      throw new Error(`Tab ${tabId} changed during screenshot capture`);
+    }
     return { light, dark, masks, version };
   } finally {
     if (context) {

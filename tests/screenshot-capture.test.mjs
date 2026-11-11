@@ -34,6 +34,8 @@ const fixture = {
   version,
   tabId: 42,
   unmapped: false,
+  legacy: false,
+  missingRevision: false,
   visits: [],
 };
 
@@ -46,7 +48,7 @@ function renderFixture() {
     props: { pageProps: { json: JSON.stringify(pageData) } },
   };
   const preview = (theme) => `
-    <div id="tabPreviewScreenshot${theme}" class="preview" data-color="maple" data-theme="${theme.toLowerCase()}">
+    <div id="tabPreviewScreenshot${theme}" class="preview" ${fixture.legacy || fixture.missingRevision ? "" : `data-tab-id="${fixture.tabId}" data-tab-version="${fixture.version}"`} data-color="maple" data-theme="${theme.toLowerCase()}">
       <div data-color="maple" data-theme="${theme.toLowerCase()}">
         <div class="accent">Section title</div>
         <div class="panel"><span class="notes">1 2 3 4</span><div class="staff"></div><span class="muted">Repeat</span></div>
@@ -70,7 +72,7 @@ function renderFixture() {
     .staff { height: 1px; margin-top: 30px; background: hsl(var(--screenshot-foreground) / 0.5); }
     .muted { color: hsl(var(--gray)); }
   </style></head><body>${preview("Light")}${preview("Dark")}
-    <script id="__NEXT_DATA__" type="application/json">${JSON.stringify(nextData)}</script>
+    ${fixture.legacy ? `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify(nextData)}</script>` : ""}
   </body></html>`;
 }
 
@@ -123,7 +125,7 @@ test("capture API generates compatible masks without changing the request contra
   );
 
   await t.test(
-    "legacy request uploads originals and both thumbnail sizes",
+    "App Router page without __NEXT_DATA__ uploads originals and both thumbnail sizes",
     async () => {
       const response = await capture();
       assert.equal(response.status, 200, await response.text());
@@ -185,6 +187,29 @@ test("capture API generates compatible masks without changing the request contra
       );
     },
   );
+
+  await t.test("supports legacy Pages Router during rollout", async () => {
+    fixture.legacy = true;
+    const start = uploads.length;
+    try {
+      assert.equal((await capture()).status, 200);
+      assert.equal(uploads.length - start, 9);
+      assert.equal(uploads[start].Metadata["tab-version"], version);
+    } finally {
+      fixture.legacy = false;
+    }
+  });
+
+  await t.test("rejects missing App Router revision without uploading", async () => {
+    fixture.missingRevision = true;
+    const start = uploads.length;
+    try {
+      assert.equal((await capture()).status, 500);
+      assert.equal(uploads.length, start);
+    } finally {
+      fixture.missingRevision = false;
+    }
+  });
 
   await t.test(
     "uses production bucket and the revision actually rendered",

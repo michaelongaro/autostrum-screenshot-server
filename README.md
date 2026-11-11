@@ -64,10 +64,15 @@ lossless capture, with quality 90 and 4:4:4 chroma subsampling.
 Keep `src/services/screenshot-thumbnails.ts` in sync with Autostrum's
 `src/utils/tabScreenshotThumbnails.ts` and `src/utils/createTabScreenshotThumbnails.ts`.
 
-The server reads the rendered tab's `updatedAt` from the page's serialized Next.js
-props and stores its ISO value on every asset in S3 metadata as `tab-version`. This requires no
-new request field or additional Autostrum deployment for the timestamp. It avoids
-guessing revisions and labels the atlas with the version actually captured.
+The server reads `data-tab-id` and `data-tab-version` from the hydrated
+`#tabPreviewScreenshotLight` element and stores the ISO revision on every asset
+in S3 metadata as `tab-version`. It checks the revision again after capture.
+Deploy the matching Autostrum preview attributes with this worker change.
+App Router pages do not emit `#__NEXT_DATA__`; relying on that Pages Router
+payload caused captures to fail before uploading after the router migration.
+The serialized Pages Router props remain supported as a fallback for older apps.
+This requires no new request field, avoids guessing revisions, and labels the
+atlas with the version actually captured.
 Autostrum rejects an atlas whose metadata does not match the displayed tab.
 
 Capture fails before uploading assets if the tab ID/revision cannot be verified
