@@ -1,15 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-
-let captureService:
-  | Promise<typeof import("../services/screenshot-service.js")>
-  | undefined;
-
-export async function closeCaptureBrowser() {
-  const service = await captureService?.catch(() => undefined);
-  await service?.closeBrowser();
-}
+import { captureAndUploadScreenshots } from "../services/screenshot-service.js";
 
 const screenshotRequestSchema = z.object({
   tabId: z.number().int().positive(),
@@ -32,9 +24,7 @@ screenshotRoute.post(
     }
 
     try {
-      captureService ??= import("../services/screenshot-service.js");
-      const service = await captureService;
-      if (!(await service.captureAndUploadScreenshots(tabId, tabTitle, type))) {
+      if (!(await captureAndUploadScreenshots({ tabId, tabTitle, type }))) {
         return c.json(
           { success: false, error: "Screenshot queue is full" },
           503,

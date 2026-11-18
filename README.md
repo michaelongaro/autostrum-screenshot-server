@@ -20,7 +20,6 @@ BASE_URL=http://localhost:3000
 SCREENSHOT_SECRET=your-shared-secret
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
-PLAYWRIGHT_IDLE_CLOSE_MS=5000
 SCREENSHOT_QUEUE_CAPACITY=4
 ```
 
@@ -84,21 +83,21 @@ more requests can wait. When the queue is full the API returns HTTP 503 with
 `Retry-After: 5`. The Autostrum caller retries 502 and 503 with bounded backoff.
 Deploy that caller before relying on the queue limit during bursts.
 
-The service shares a Playwright browser across active captures, closes each
-context when capture finishes, and closes the browser after
-`PLAYWRIGHT_IDLE_CLOSE_MS` of inactivity (5 seconds by default). The Docker
-entry point starts Node directly, and the HTTP server loads the capture stack
-on the first authorized request.
+Each capture starts a separate Node process for Chromium, Sharp, and uploads.
+Chromium closes after rendering, and the worker exits after all uploads settle.
+The HTTP server waits for the worker to exit before starting the next capture.
+The Docker image runs Tini to reap Chromium subprocesses and releases cached
+pages for the installed browser and image-processing dependencies when the
+queue empties. Captures already in the queue can reuse those cached files.
+`PLAYWRIGHT_IDLE_CLOSE_MS` is obsolete and can be removed from Railway.
 
 ### Railway memory verification
 
-Set `PLAYWRIGHT_IDLE_CLOSE_MS=5000` on Railway if an existing variable
-overrides the default. Set `SCREENSHOT_MEMORY_LOGS=1` to log Node memory in
-bytes at capture and browser lifecycle boundaries. Compare the per-replica
-memory graph with a quiet baseline, a burst of distinct tabs, and a quiet
-period after browser exit. Node's RSS excludes Chromium, so compare the logs
-with the service graph and the container's `memory.stat` when diagnosing
-memory that stays resident.
+Set `SCREENSHOT_MEMORY_LOGS=1` to log memory in bytes. Compare `startup`
+and `queue-drained` for the HTTP server and Linux container, and
+`capture-started`, `browser-closed`, and `assets-encoded` for the temporary
+worker. The container logs include anonymous memory and file cache because
+Railway can show cached browser files long after Chromium exits.
 
 After deploying the matching Autostrum app, try
 `SCREENSHOT_USE_PREVIEW_ROUTE=1` in staging. It uses the dedicated
@@ -137,6 +136,6 @@ npm test
 ```
 
 Tests compile TypeScript and use a local HTML fixture with real Chromium and
-mocked S3 uploads. They cover the unchanged API, atlas layout/opacity, revision
+a local S3 stub. They cover the capture API, atlas layout/opacity, revision
 metadata, both buckets, invalid captures, upload failures, and per-tab sequencing.
 They do not write to S3 or access the production app/database.

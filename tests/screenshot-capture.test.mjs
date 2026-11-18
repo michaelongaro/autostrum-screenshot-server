@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { mock, test } from "node:test";
-import { S3Client } from "@aws-sdk/client-s3";
+import { readFileSync } from "node:fs";
+import { buffer } from "node:stream/consumers";
+import { test } from "node:test";
 import { Hono } from "hono";
 import sharp from "sharp";
 
@@ -12,17 +13,29 @@ const uploads = [];
 let failNextUpload = false;
 let pendingUploads = 0;
 let pauseUploads;
-const send = mock.method(S3Client.prototype, "send", async (command) => {
+// The capture worker runs in its own process, so stub S3 over HTTP.
+const s3 = createServer(async (req, res) => {
   pendingUploads++;
-  uploads.push(command.input);
   const fail = failNextUpload;
   failNextUpload = false;
   try {
+    const [, bucket, ...key] = new URL(req.url, "http://localhost").pathname.split("/");
+    uploads.push({
+      Bucket: bucket,
+      Key: key.join("/"),
+      Body: await buffer(req),
+      ContentType: req.headers["content-type"],
+      Metadata: { "tab-version": req.headers["x-amz-meta-tab-version"] },
+    });
     // Exercise queue behavior when one upload rejects before the others finish.
-    if (fail) throw new Error("Test upload failure");
+    if (fail) {
+      res.writeHead(400, { "Content-Type": "application/xml" });
+      res.end("<Error><Code>InvalidRequest</Code><Message>Test failure</Message></Error>");
+      return;
+    }
     await pauseUploads?.();
     await new Promise((resolve) => setTimeout(resolve, 10));
-    return {};
+    res.end();
   } finally {
     pendingUploads--;
   }
@@ -96,17 +109,17 @@ test("capture API generates compatible masks without changing the request contra
       : html);
   });
   server.listen(0, "127.0.0.1");
-  await once(server, "listening");
+  s3.listen(0, "127.0.0.1");
+  await Promise.all([once(server, "listening"), once(s3, "listening")]);
   process.env.BASE_URL = `http://127.0.0.1:${server.address().port}`;
+  process.env.AWS_ENDPOINT_URL_S3 = `http://127.0.0.1:${s3.address().port}`;
 
   const { screenshotRoute } = await import("../dist/routes/screenshot.js");
-  const { closeBrowser } =
-    await import("../dist/services/screenshot-service.js");
   const app = new Hono().route("/screenshot", screenshotRoute);
   t.after(async () => {
-    await closeBrowser();
-    await new Promise((resolve) => server.close(resolve));
-    send.mock.restore();
+    await Promise.all(
+      [server, s3].map((server) => new Promise((resolve) => server.close(resolve))),
+    );
   });
 
   const capture = (overrides = {}) =>
@@ -139,6 +152,9 @@ test("capture API generates compatible masks without changing the request contra
       const response = await capture();
       assert.equal(response.status, 200, await response.text());
       assert.equal(uploads.length, 9);
+      if (process.platform === "linux") {
+        assert.equal(readFileSync("/proc/thread-self/children", "utf8").trim(), "");
+      }
       const mask = uploads.find((upload) => upload.Key === "42/masks-v1.png");
       assert.equal(mask.Bucket, "autostrum-screenshots-dev");
       assert.equal(mask.ContentType, "image/png");

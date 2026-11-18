@@ -2,7 +2,8 @@ import "dotenv/config";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { logger } from "hono/logger";
-import { closeCaptureBrowser, screenshotRoute } from "./routes/screenshot.js";
+import { screenshotRoute } from "./routes/screenshot.js";
+import { logServerMemory } from "./services/server-memory.js";
 
 const app = new Hono();
 
@@ -15,15 +16,7 @@ app.route("/screenshot", screenshotRoute);
 const port = Number(process.env.PORT) || 3001;
 
 console.log(`Screenshot server running on port ${port}`);
-if (process.env.SCREENSHOT_MEMORY_LOGS === "1") {
-  console.log(
-    JSON.stringify({
-      event: "screenshot-memory",
-      stage: "startup",
-      ...process.memoryUsage(),
-    }),
-  );
-}
+logServerMemory("startup");
 
 const server = serve({
   fetch: app.fetch,
@@ -31,12 +24,11 @@ const server = serve({
 });
 
 let shuttingDown = false;
-const shutdown = async () => {
+const shutdown = () => {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log("Shutting down...");
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  await closeCaptureBrowser();
+  server.close();
 };
 
 process.on("SIGINT", shutdown);
