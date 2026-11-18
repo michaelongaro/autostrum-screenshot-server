@@ -20,7 +20,8 @@ BASE_URL=http://localhost:3000
 SCREENSHOT_SECRET=your-shared-secret
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
-PLAYWRIGHT_IDLE_CLOSE_MS=60000
+PLAYWRIGHT_IDLE_CLOSE_MS=5000
+SCREENSHOT_QUEUE_CAPACITY=4
 ```
 
 `BASE_URL` must point to the updated Autostrum app, which renders the static
@@ -77,13 +78,33 @@ Autostrum rejects an atlas whose metadata does not match the displayed tab.
 
 Capture fails before uploading assets if the tab ID/revision cannot be verified
 or the preview contains a color outside the supported mask roles. An upload
-failure returns an error after all in-flight uploads finish. Captures for the same
-bucket/tab are serialized within the server process; different tabs can run
-concurrently in separate browser contexts.
+failure returns an error after all in-flight uploads finish. Each replica handles
+one capture at a time through rendering, encoding, and uploads. By default four
+more requests can wait. When the queue is full the API returns HTTP 503 with
+`Retry-After: 5`. The Autostrum caller retries 502 and 503 with bounded backoff.
+Deploy that caller before relying on the queue limit during bursts.
 
 The service shares a Playwright browser across active captures, closes each
 context when capture finishes, and closes the browser after
-`PLAYWRIGHT_IDLE_CLOSE_MS` of inactivity.
+`PLAYWRIGHT_IDLE_CLOSE_MS` of inactivity (5 seconds by default). The Docker
+entry point starts Node directly, and the HTTP server loads the capture stack
+on the first authorized request.
+
+### Railway memory verification
+
+Set `PLAYWRIGHT_IDLE_CLOSE_MS=5000` on Railway if an existing variable
+overrides the default. Set `SCREENSHOT_MEMORY_LOGS=1` to log Node memory in
+bytes at capture and browser lifecycle boundaries. Compare the per-replica
+memory graph with a quiet baseline, a burst of distinct tabs, and a quiet
+period after browser exit. Node's RSS excludes Chromium, so compare the logs
+with the service graph and the container's `memory.stat` when diagnosing
+memory that stays resident.
+
+After deploying the matching Autostrum app, try
+`SCREENSHOT_USE_PREVIEW_ROUTE=1` in staging. It uses the dedicated
+`/screenshot-preview/:id` route and waits for the preview and fonts.
+Check representative tabs and both themes before enabling it on Railway.
+Without this variable, the worker uses the existing tab page.
 
 ## Deploy and backfill
 

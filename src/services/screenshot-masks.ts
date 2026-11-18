@@ -16,6 +16,25 @@ export const TAB_SCREENSHOT_MASK_ROLES = [
   "gray",
 ] as const;
 
+export const TAB_SCREENSHOT_MASK_LAYER_BYTES =
+  TAB_SCREENSHOT_MASK_WIDTH * TAB_SCREENSHOT_MASK_HEIGHT * 4;
+
+export function encodeTabScreenshotMaskAtlas(
+  data: Buffer,
+  width: number,
+  layerHeight: number,
+) {
+  return sharp(data, {
+    raw: {
+      width,
+      height: layerHeight * TAB_SCREENSHOT_MASK_ROLES.length,
+      channels: 4,
+    },
+  })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+}
+
 export function getTabScreenshotMaskKey(tabId: number) {
   return `${tabId}/${TAB_SCREENSHOT_MASK_FORMAT}.png`;
 }
@@ -24,10 +43,6 @@ export function getTabScreenshotMaskKey(tabId: number) {
  *  Each basis render sets one role to white and all other roles to black.
  *  Original opacity, occlusion, shadows, and antialiasing remain intact. */
 export async function captureTabScreenshotMasks(page: Page): Promise<Buffer> {
-  await page
-    .locator("#tabPreviewScreenshotLight")
-    .waitFor({ state: "visible" });
-  await page.evaluate(() => document.fonts.ready);
   // Render a DOM snapshot at integer coordinates, outside scrolling/clipping
   // ancestors. Locator screenshots of the original fractional position can
   // include a row of pixels from the surrounding page at the crop boundary.
@@ -98,8 +113,11 @@ export async function captureTabScreenshotMasks(page: Page): Promise<Buffer> {
       throw new Error("Screenshot preview contains an unmapped color role");
     }
 
-    const layers: Buffer[] = [];
-    for (const role of TAB_SCREENSHOT_MASK_ROLES) {
+    const atlas = Buffer.alloc(
+      TAB_SCREENSHOT_MASK_LAYER_BYTES * TAB_SCREENSHOT_MASK_ROLES.length,
+      255,
+    );
+    for (const [index, role] of TAB_SCREENSHOT_MASK_ROLES.entries()) {
       await setRole(role);
       const coverage = await sharp(
         await preview.screenshot({ type: "png", animations: "disabled" }),
@@ -110,22 +128,13 @@ export async function captureTabScreenshotMasks(page: Page): Promise<Buffer> {
         .raw()
         .toBuffer();
 
-      const rgba = Buffer.alloc(coverage.length * 4, 255);
+      const offset = index * TAB_SCREENSHOT_MASK_LAYER_BYTES;
       for (let pixel = 0; pixel < coverage.length; pixel++) {
-        rgba[pixel * 4 + 3] = coverage[pixel]!;
+        atlas[offset + pixel * 4 + 3] = coverage[pixel]!;
       }
-      layers.push(rgba);
     }
 
-    return await sharp(Buffer.concat(layers), {
-      raw: {
-        width: TAB_SCREENSHOT_MASK_WIDTH,
-        height: TAB_SCREENSHOT_MASK_HEIGHT * TAB_SCREENSHOT_MASK_ROLES.length,
-        channels: 4,
-      },
-    })
-      .png({ compressionLevel: 9 })
-      .toBuffer();
+    return atlas;
   } finally {
     await style.evaluate((node: HTMLStyleElement) => node.remove());
     await preview.evaluate((node) => node.remove());

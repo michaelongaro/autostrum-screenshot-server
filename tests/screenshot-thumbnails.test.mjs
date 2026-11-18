@@ -12,12 +12,18 @@ test("thumbnail atlas resizes roles independently without bleeding at boundaries
     }
     return layer;
   });
-  const masks = await sharp(Buffer.concat(layers), {
+  const rawMasks = Buffer.concat(layers);
+  const masks = await sharp(rawMasks, {
     raw: { width: 1200, height: 560 * 7, channels: 4 },
   })
     .png()
     .toBuffer();
   const thumbnails = await createTabScreenshotThumbnails(42, { masks });
+  assert.deepEqual(
+    await createTabScreenshotThumbnails(42, { rawMasks }),
+    thumbnails,
+    "raw and PNG inputs produce identical thumbnail assets",
+  );
   assert.equal(thumbnails.length, 2, "masks-only capture preserves JPEGs");
   for (const thumbnail of thumbnails) {
     const { data, info } = await sharp(thumbnail.body)

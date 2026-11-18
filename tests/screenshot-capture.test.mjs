@@ -11,6 +11,7 @@ const version = "2026-10-31T12:34:56.789Z";
 const uploads = [];
 let failNextUpload = false;
 let pendingUploads = 0;
+let pauseUploads;
 const send = mock.method(S3Client.prototype, "send", async (command) => {
   pendingUploads++;
   uploads.push(command.input);
@@ -19,6 +20,7 @@ const send = mock.method(S3Client.prototype, "send", async (command) => {
   try {
     // Exercise queue behavior when one upload rejects before the others finish.
     if (fail) throw new Error("Test upload failure");
+    await pauseUploads?.();
     await new Promise((resolve) => setTimeout(resolve, 10));
     return {};
   } finally {
@@ -29,6 +31,7 @@ const send = mock.method(S3Client.prototype, "send", async (command) => {
 process.env.SCREENSHOT_SECRET = secret;
 process.env.AWS_ACCESS_KEY_ID = "test-only-access-key";
 process.env.AWS_SECRET_ACCESS_KEY = "test-only-secret-key";
+process.env.SCREENSHOT_QUEUE_CAPACITY = "1";
 
 const fixture = {
   version,
@@ -78,13 +81,19 @@ function renderFixture() {
 
 test("capture API generates compatible masks without changing the request contract", async (t) => {
   const server = createServer((req, res) => {
+    const url = new URL(req.url, "http://localhost");
     fixture.visits.push({
-      url: new URL(req.url, "http://localhost"),
+      url,
       uploads: uploads.length,
       pendingUploads,
     });
     res.writeHead(200, { "Content-Type": "text/html" });
-    res.end(renderFixture());
+    const html = renderFixture();
+    res.end(url.pathname === "/screenshot-preview/42"
+      ? html.replace("</body>", `<script>
+          setTimeout(() => document.body.setAttribute("data-screenshot-ready", ""), 100);
+        </script></body>`)
+      : html);
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -200,6 +209,20 @@ test("capture API generates compatible masks without changing the request contra
     }
   });
 
+  await t.test("captures from the configured screenshot-only route", async () => {
+    process.env.SCREENSHOT_USE_PREVIEW_ROUTE = "1";
+    const start = uploads.length;
+    try {
+      const response = await capture();
+      assert.equal(response.status, 200, await response.text());
+      assert.equal(fixture.visits.at(-1).url.pathname, "/screenshot-preview/42");
+      assert.equal(uploads.length - start, 9);
+      assert.equal(uploads[start].Metadata["tab-version"], version);
+    } finally {
+      delete process.env.SCREENSHOT_USE_PREVIEW_ROUTE;
+    }
+  });
+
   await t.test("rejects missing App Router revision without uploading", async () => {
     fixture.missingRevision = true;
     const start = uploads.length;
@@ -277,4 +300,34 @@ test("capture API generates compatible masks without changing the request contra
       );
     },
   );
+
+  await t.test("queues other buckets and returns a retryable response when full", { timeout: 30_000 }, async () => {
+    let notifyEntered;
+    let releaseUploads;
+    const entered = new Promise((resolve) => { notifyEntered = resolve; });
+    const resume = new Promise((resolve) => { releaseUploads = resolve; });
+    pauseUploads = () => {
+      notifyEntered();
+      return resume;
+    };
+
+    const visits = fixture.visits.length;
+    const active = capture();
+    let queued;
+    try {
+      await entered;
+      queued = capture({ type: "production" });
+      const overflow = await capture();
+      assert.equal(overflow.status, 503);
+      assert.equal(overflow.headers.get("Retry-After"), "5");
+      assert.equal(fixture.visits.length - visits, 1);
+    } finally {
+      pauseUploads = undefined;
+      releaseUploads();
+      const responses = await Promise.all([active, queued]);
+      assert.deepEqual(responses.map((response) => response?.status), [200, 200]);
+    }
+    assert.equal(fixture.visits.length - visits, 2);
+    assert.equal(fixture.visits.at(-1).pendingUploads, 0);
+  });
 });
