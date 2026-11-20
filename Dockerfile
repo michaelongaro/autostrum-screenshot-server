@@ -16,7 +16,8 @@ RUN npx playwright install --only-shell --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
 COPY docker/trim-screenshot-file-cache.c /tmp/
-RUN cc -O2 -Wall -Wextra -o /usr/local/bin/trim-screenshot-file-cache /tmp/trim-screenshot-file-cache.c \
+RUN cc -O2 -Wall -Wextra -DSYSTEM_LIBRARY_DIR=\"/usr/lib/$(cc -print-multiarch)\" \
+    -o /usr/local/bin/trim-screenshot-file-cache /tmp/trim-screenshot-file-cache.c \
     && rm /tmp/trim-screenshot-file-cache.c
 ENV SCREENSHOT_CACHE_TRIMMER=/usr/local/bin/trim-screenshot-file-cache
 

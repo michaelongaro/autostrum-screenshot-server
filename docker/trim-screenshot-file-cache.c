@@ -31,12 +31,20 @@ static int trim_file(const char *path, const struct stat *info, int type,
     return 0;
 }
 
+static void trim_path(const char *path) {
+    if (nftw(path, trim_file, 16, FTW_PHYS) == -1) {
+        perror(path);
+        failed = 1;
+    }
+}
+
 int main(int argc, char *argv[]) {
     for (int index = 1; index < argc; index++) {
-        if (nftw(argv[index], trim_file, 16, FTW_PHYS) == -1) {
-            perror(argv[index]);
-            failed = 1;
-        }
+        trim_path(argv[index]);
     }
+    // Chromium and Fontconfig also read files outside the browser install.
+    trim_path("/usr/share/fonts");
+    trim_path("/var/cache/fontconfig");
+    trim_path(SYSTEM_LIBRARY_DIR);
     return failed;
 }

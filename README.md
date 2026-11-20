@@ -86,15 +86,17 @@ Deploy that caller before relying on the queue limit during bursts.
 Each capture starts a separate Node process for Chromium, Sharp, and uploads.
 Chromium closes after rendering, and the worker exits after all uploads settle.
 The HTTP server waits for the worker to exit before starting the next capture.
-The Docker image runs Tini to reap Chromium subprocesses and releases cached
-pages for the installed browser and image-processing dependencies when the
-queue empties. Captures already in the queue can reuse those cached files.
+The Docker image runs Tini to reap Chromium subprocesses. When the queue
+empties, it asks Linux to discard unused cached pages from the browser,
+image-processing dependencies, Node executable, system fonts, Fontconfig
+cache, and system libraries. Node's mapped pages stay resident. Captures
+already in the queue can reuse those cached files.
 `PLAYWRIGHT_IDLE_CLOSE_MS` is obsolete and can be removed from Railway.
 
 ### Railway memory verification
 
-Set `SCREENSHOT_MEMORY_LOGS=1` to log memory in bytes. Compare `startup`
-and `queue-drained` for the HTTP server and Linux container, and
+Set `SCREENSHOT_MEMORY_LOGS=1` to log memory in bytes. Compare `startup`,
+`before-cache-trim`, and `queue-drained` for the HTTP server and Linux container, and
 `capture-started`, `browser-closed`, and `assets-encoded` for the temporary
 worker. The container logs include anonymous memory and file cache because
 Railway can show cached browser files long after Chromium exits.

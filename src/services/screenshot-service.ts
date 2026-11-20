@@ -46,6 +46,7 @@ async function trimFileCache() {
     await execFileAsync(
       SCREENSHOT_CACHE_TRIMMER,
       [
+        process.execPath,
         PLAYWRIGHT_BROWSERS_PATH,
         fileURLToPath(new URL("../../node_modules/@img", import.meta.url)),
         fileURLToPath(new URL("../../node_modules/playwright-core", import.meta.url)),
@@ -69,6 +70,7 @@ export async function captureAndUploadScreenshots(
       // Keep files warm between queued captures and finish eviction before
       // starting another worker.
       if (--acceptedCaptures === 0) {
+        logServerMemory("before-cache-trim", job.tabId);
         await trimFileCache();
         logServerMemory("queue-drained", job.tabId);
       }
